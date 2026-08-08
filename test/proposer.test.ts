@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { CompleteResult, HarnessItem, HarnessState, ProposeInput } from "pi-continual-harness";
+import type { ModelProposerConfig } from "../src/config.js";
 import {
   createModelProposer,
   extractJsonArray,
@@ -34,7 +35,7 @@ function throwingComplete(err: Error): NonNullable<ProposeInput["complete"]> {
   };
 }
 
-const cfg = (over: Record<string, unknown> = {}) => over as never;
+const cfg = (over: Record<string, unknown> = {}): ModelProposerConfig => over as unknown as ModelProposerConfig;
 
 function proposeWith(
   text: string,
@@ -99,6 +100,23 @@ describe("create/model deltas", () => {
     const items = [item({ id: "h_x", kind: "prompt", content: "c" })];
     const r = await proposeWith(JSON.stringify([{ op: "update", id: "h_x" }]), items);
     expect(r.deltas ?? []).toHaveLength(0);
+  });
+
+  it("drops a later update/delete of an id deleted earlier in the same batch", async () => {
+    // [delete h_x, update h_x]: the delete is valid, but the update references an
+    // id that will be gone — drop it here so applyDeltas never throws on it.
+    const items = [item({ id: "h_x", kind: "prompt", content: "c" })];
+    const r = await proposeWith(
+      JSON.stringify([
+        { op: "delete", id: "h_x", reason: "obsolete" },
+        { op: "update", id: "h_x", content: "changed" }, // dropped: deleted above
+        { op: "delete", id: "h_x", reason: "again" }, // dropped: deleted above
+      ]),
+      items,
+    );
+    expect(r.deltas).toHaveLength(1);
+    expect(r.deltas![0]!.delta.op).toBe("delete");
+    expect(r.modelCall?.ok).toBe(true);
   });
 });
 
@@ -178,6 +196,17 @@ describe("config + spend bounding", () => {
     );
     const imps = r.deltas!.map((d) => (d.delta as { importance?: number }).importance).sort((a, b) => (a ?? 0) - (b ?? 0));
     expect(imps).toEqual([0, 1]);
+  });
+
+  it("labels telemetry with the resolved model from complete (result.model)", async () => {
+    const proposer = createModelProposer({ getConfig: async () => cfg() });
+    const r = await proposer.propose({
+      evidence: "e",
+      state: state([]),
+      lookback: 5,
+      complete: async () => ({ text: "[]", model: "anthropic/claude-x" }),
+    });
+    expect(r.modelCall?.model).toBe("anthropic/claude-x");
   });
 });
 

@@ -86,8 +86,6 @@ function buildPrompt(input: ProposeInput): string {
           )
           .join("\n");
   return [
-    PROPOSER_SYSTEM_PROMPT,
-    "",
     "Each array element is exactly one of:",
     '- {"op":"create","kind":"prompt|memory|skill|subagent","content":"...","evidence":"...","importance":0.0-1.0}',
     '- {"op":"update","id":"h_xxxx","content":"...","evidence":"...","importance":0.0-1.0,"active":true|false}',
@@ -126,10 +124,15 @@ export function parseDeltas(text: string, maxDeltas: number, input: ProposeInput
   }
 
   const knownIds = new Set(input.state.items.map((i) => i.id));
+  // Track ids deleted earlier in this batch so a later update/delete of the same
+  // id is dropped here, not handed to applyDeltas (which would throw on the
+  // now-missing id and abort the whole batch). runRefine also guards this, but
+  // dropping here keeps the audit honest about what the proposer intended.
+  const deletedIds = new Set<string>();
   const deltas: ProposedDelta[] = [];
   let dropped = 0;
   for (const raw of arr) {
-    const d = sanitizeDelta(raw, knownIds);
+    const d = sanitizeDelta(raw, knownIds, deletedIds);
     if (!d) {
       dropped++;
       continue;
@@ -138,6 +141,7 @@ export function parseDeltas(text: string, maxDeltas: number, input: ProposeInput
       dropped++;
       continue;
     }
+    if (d.delta.op === "delete") deletedIds.add(d.delta.id);
     deltas.push(d);
   }
   return { ok: true, deltas, dropped };
@@ -145,7 +149,11 @@ export function parseDeltas(text: string, maxDeltas: number, input: ProposeInput
 
 /** Validate one raw object against the Delta union + current state. Returns null
  *  for anything that must not reach applyDeltas. */
-export function sanitizeDelta(raw: unknown, knownIds: Set<string>): ProposedDelta | null {
+export function sanitizeDelta(
+  raw: unknown,
+  knownIds: Set<string>,
+  deletedIds: Set<string> = new Set(),
+): ProposedDelta | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
 
@@ -167,7 +175,7 @@ export function sanitizeDelta(raw: unknown, knownIds: Set<string>): ProposedDelt
 
   if (o["op"] === "update") {
     const id = typeof o["id"] === "string" ? o["id"] : undefined;
-    if (id === undefined || !knownIds.has(id)) return null;
+    if (id === undefined || !knownIds.has(id) || deletedIds.has(id)) return null;
     const content = nonEmptyString(o["content"]);
     const evidence = nonEmptyString(o["evidence"]);
     const importance = coerceImportance(o["importance"]);
@@ -189,7 +197,7 @@ export function sanitizeDelta(raw: unknown, knownIds: Set<string>): ProposedDelt
   if (o["op"] === "delete") {
     const id = typeof o["id"] === "string" ? o["id"] : undefined;
     const reason = nonEmptyString(o["reason"]);
-    if (id === undefined || !knownIds.has(id) || reason === undefined) return null;
+    if (id === undefined || !knownIds.has(id) || deletedIds.has(id) || reason === undefined) return null;
     return { delta: { op: "delete" as const, id, reason }, rationale: `model delete ${id}: ${truncate(reason)}` };
   }
 
@@ -224,7 +232,14 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
         };
       }
 
-      const config = await getConfig();
+      // A custom getConfig could throw (the default loadConfig never does); treat
+      // a throw as missing config so /refine degrades to an audited no-op.
+      let config: ModelProposerConfig;
+      try {
+        config = await getConfig();
+      } catch {
+        config = {};
+      }
       const prompt = buildPrompt(input);
 
       let result: CompleteResult;
@@ -251,7 +266,7 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
         return {
           deltas: [],
           modelCall: {
-            model: config.model ?? "active",
+            model: result.model ?? config.model ?? "active",
             ok: false,
             error: outcome.error,
             latencyMs: elapsed(),
@@ -261,7 +276,7 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
       }
 
       const telemetry: ModelCallTelemetry = {
-        model: config.model ?? "active",
+        model: result.model ?? config.model ?? "active",
         ok: true,
         latencyMs: elapsed(),
         ...(result.usage ? { inputTokens: result.usage.input, outputTokens: result.usage.output } : {}),

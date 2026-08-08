@@ -24,7 +24,7 @@ than shipping it invisible.
 pi install npm:pi-harness-model-proposer
 ```
 
-Requires `pi-continual-harness >= 0.6.1` (which injects the `complete` closure
+Requires `pi-continual-harness >= 0.6.2` (which injects the `complete` closure
 and records `modelCall` telemetry). Both install together.
 
 ## Usage
