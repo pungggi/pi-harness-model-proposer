@@ -1,7 +1,7 @@
 # pi-harness-model-proposer
 
 A **dedicated-model proposer** companion for
-[pi-continual-harness](https://www.npmjs.com/package/pi-continual-harness) — the
+[pi-continual-harness](https://www.npmjs.com/package/pi-continual-harness) ([repo](https://github.com/pungggi/pi-continual-harness)) — the
 online self-improvement layer for the [pi](https://pi.dev) coding agent.
 
 pi-continual-harness's `/refine` splits into **propose** then **apply**, with the
