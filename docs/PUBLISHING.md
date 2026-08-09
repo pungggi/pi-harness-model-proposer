@@ -22,7 +22,14 @@ release.yml  ──►  npm ci → typecheck → test → version-sync check →
 
 ---
 
-## 0. Bootstrap status (one-time, PENDING)
+## 0. Bootstrap status (one-time, DONE @ 0.1.0)
+
+`0.1.0` was published manually on 2026-08-09 under npm account `ngsoftware`
+(same account that owns every sibling `pi-*` package; `pungggi` is the **GitHub**
+org/user, not the npm account). The publish has **no** provenance badge —
+expected for the bootstrap. From `0.2.0` onward, CI owns every publish.
+
+The steps below are kept for the record:
 
 npm Trusted Publishing **cannot create a new package** — it can only be attached
 to a package that already exists. So the very first publish (`0.1.0`) is done
@@ -36,7 +43,7 @@ Bootstrap steps (run once, recorded here so it is reproducible):
 2. **Manual first publish** — no `--provenance` (provenance needs the Trusted
    Publisher that does not exist yet):
    ```bash
-   npm login                       # as the package owner (pungggi), interactive OTP OK
+   npm login                       # as the package owner (ngsoftware), interactive OTP OK
    npm publish --access public     # NO --provenance on the bootstrap
    npm view pi-harness-model-proposer version   # expect 0.1.0
    ```
@@ -51,7 +58,8 @@ Every release from `0.2.0` is CI-only with provenance.
 
 ## 1. Prerequisites (one-time)
 
-1. An **npm account** that will own `pi-harness-model-proposer` (`pungggi`).
+1. An **npm account** that will own `pi-harness-model-proposer` (`ngsoftware` —
+   same account that owns all sibling `pi-*` packages; `pungggi` is the GitHub user).
 2. **2FA enabled** on the account (required for modern publish).
 3. Confirm ownership after bootstrap:
    ```bash
