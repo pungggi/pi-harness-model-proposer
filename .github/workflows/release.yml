@@ -83,11 +83,31 @@ jobs:
           fi
           echo "✓ versions in sync"
 
+      # Duplicate-tag / rerun guard: if this exact version is already on npm,
+      # skip publish (green, with a notice) instead of dying with E409
+      # "Cannot publish over previously staged version".
+      # Best-effort only: two truly concurrent runs can both pass this check;
+      # npm still rejects the loser with E409.
+      - name: Check if version is already on npm
+        id: pubcheck
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION="${{ steps.ver.outputs.version }}"
+          if [ "$(npm view "${NAME}@${VERSION}" version 2>/dev/null || true)" = "${VERSION}" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${NAME}@${VERSION} is already on npm — skipping publish (duplicate tag push or rerun of a successful release)."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "${NAME}@${VERSION} is not on npm yet — publishing."
+          fi
+
       # Auth mode:
       #   - If secrets.NPM_TOKEN is non-empty → classic token auth
       #   - Else → OIDC trusted publishing (no .npmrc _authToken line)
       # Never export an empty NODE_AUTH_TOKEN — that breaks OIDC.
       - name: Publish to npm (with provenance)
+        if: steps.pubcheck.outputs.already != 'true'
         env:
           NPM_TOKEN_SECRET: ${{ secrets.NPM_TOKEN }}
         run: |

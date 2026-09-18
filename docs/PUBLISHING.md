@@ -14,7 +14,7 @@ provenance + a clean test run).
 git tag v0.2.0 && git push origin v0.2.0
         │
         ▼
-release.yml  ──►  npm ci → typecheck → test → version-sync check → npm publish --provenance
+release.yml  ──►  npm ci → typecheck → test → version-sync check → already-on-npm check → npm publish --provenance
                                                                       │
                                                                       ▼
                                                             npmjs.com/package/pi-harness-model-proposer
@@ -138,6 +138,11 @@ npm view pi-harness-model-proposer version
 
 Do **not** delete/recreate the tag unless the version never published.
 
+Rerunning a release whose version is **already on npm** (e.g. a duplicate tag
+push, or a rerun after a successful publish) does **not** fail anymore: the
+`already-on-npm check` step notices and skips `npm publish`, so the run finishes
+green with a `::notice::` annotation instead of `E409`.
+
 ---
 
 ## 5. Verify + install
@@ -160,5 +165,6 @@ From `0.2.0` onward the npm page shows a **Provenance** badge.
 | **`EOTP` / one-time password** | Token is not Automation. Use **Classic → Automation**, or delete `NPM_TOKEN` and use **Trusted Publisher** OIDC. |
 | **`E401` / invalid token** | Fix `NPM_TOKEN` secret or OIDC. |
 | **`E404` on PUT (first publish)** | Bootstrap not done — see §0. |
+| **`E409` over previously staged version** | Duplicate publish of a version already on npm. The pre-publish guard skips this case green; if you still see it, two runs raced concurrently — the loser can be ignored. |
 | `version drift: tag != package.json` | Align versions, retag only if necessary. |
 | Local emergency publish | `CI=1 npm publish --access public --provenance` after `npm login`. Prefer CI. |
