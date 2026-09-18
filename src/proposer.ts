@@ -47,6 +47,10 @@ const PROPOSER_SYSTEM_PROMPT = [
 
 const KINDS: readonly ComponentKind[] = ["prompt", "memory", "skill", "subagent"];
 
+function isScope(v: unknown): v is "global" | "project" {
+  return v === "global" || v === "project";
+}
+
 function isKind(v: unknown): v is ComponentKind {
   return typeof v === "string" && (KINDS as readonly string[]).includes(v);
 }
@@ -74,27 +78,32 @@ export function extractJsonArray(text: string): string {
 }
 
 /** Build the prompt: schema + rules + a digest of the current state (so the model
- *  can update/delete by real id) + the trajectory evidence. */
-function buildPrompt(input: ProposeInput): string {
+ *  can update/delete by real id — project-scoped items are tagged with their
+ *  scope so it can avoid duplicating project facts as global) + the trajectory
+ *  evidence. */
+export function buildPrompt(input: ProposeInput): string {
   const digest =
     input.state.items.length === 0
       ? "(no existing items)"
       : input.state.items
           .map(
             (i) =>
-              `- [${i.id}] kind=${i.kind} importance=${i.importance.toFixed(2)}${i.active ? "" : " inactive"}: ${i.content}`,
+              `- [${i.id}] kind=${i.kind} importance=${i.importance.toFixed(2)}${i.active ? "" : " inactive"}${
+                i.scope === "project" ? ` scope=project(${i.project ?? ""})` : ""
+              }: ${i.content}`,
           )
           .join("\n");
   return [
     "Each array element is exactly one of:",
-    '- {"op":"create","kind":"prompt|memory|skill|subagent","content":"...","evidence":"...","importance":0.0-1.0}',
-    '- {"op":"update","id":"h_xxxx","content":"...","evidence":"...","importance":0.0-1.0,"active":true|false}',
+    '- {"op":"create","kind":"prompt|memory|skill|subagent","content":"...","evidence":"...","importance":0.0-1.0,"scope":"global|project"}',
+    '- {"op":"update","id":"h_xxxx","content":"...","evidence":"...","importance":0.0-1.0,"active":true|false,"scope":"global|project"}',
     '- {"op":"delete","id":"h_xxxx","reason":"..."}',
     "",
     "Rules:",
     "- For update/delete, use ONLY ids present in the current state below.",
     "- Every create MUST include concrete evidence drawn from the trajectory.",
     "- Prefer updating an existing item over creating a near-duplicate.",
+    '- "scope" is the durable-layer placement (default "global"). Set "project" ONLY when the item is useful exclusively in THIS project (deploy procedures, project architecture, local conventions) — the project slug is stamped server-side. A scope-only update (just id + scope) is valid and moves an item between layers.',
     "- Keep prompt notes terse and behavioral; memory facts specific; skill/subagent entries reusable, not one-task.",
     `- Emit at most ${DEFAULT_MAX_DELTAS} deltas. If nothing durable is worth recording, output [].`,
     "",
@@ -163,14 +172,20 @@ export function sanitizeDelta(
     const evidence = nonEmptyString(o["evidence"]);
     if (!kind || content === undefined || evidence === undefined) return null;
     const importance = coerceImportance(o["importance"]);
+    // Durable-layer scope (harness 0.9+): whitelisted so the model can place
+    // clearly project-specific creates in the project layer. The slug is
+    // stamped server-side (never trusted from the model). Garbage → omitted,
+    // which defaults the item to global.
+    const scope = isScope(o["scope"]) ? o["scope"] : undefined;
     const delta = {
       op: "create" as const,
       kind,
       content,
       evidence,
       ...(importance !== undefined ? { importance } : {}),
+      ...(scope !== undefined ? { scope } : {}),
     };
-    return { delta, rationale: `model create (${kind}): ${truncate(content)}` };
+    return { delta, rationale: `model create (${kind}${scope === "project" ? ", project scope" : ""}): ${truncate(content)}` };
   }
 
   if (o["op"] === "update") {
@@ -180,7 +195,16 @@ export function sanitizeDelta(
     const evidence = nonEmptyString(o["evidence"]);
     const importance = coerceImportance(o["importance"]);
     const active = typeof o["active"] === "boolean" ? o["active"] : undefined;
-    if (content === undefined && evidence === undefined && importance === undefined && active === undefined) {
+    // A scope-only update (id + scope, nothing else) is a legitimate layer move
+    // — count scope toward "something to update".
+    const scope = isScope(o["scope"]) ? o["scope"] : undefined;
+    if (
+      content === undefined &&
+      evidence === undefined &&
+      importance === undefined &&
+      active === undefined &&
+      scope === undefined
+    ) {
       return null; // nothing to update
     }
     const delta = {
@@ -190,8 +214,9 @@ export function sanitizeDelta(
       ...(evidence !== undefined ? { evidence } : {}),
       ...(importance !== undefined ? { importance } : {}),
       ...(active !== undefined ? { active } : {}),
+      ...(scope !== undefined ? { scope } : {}),
     };
-    return { delta, rationale: `model update ${id}` };
+    return { delta, rationale: `model update ${id}${scope !== undefined ? ` (scope → ${scope})` : ""}` };
   }
 
   if (o["op"] === "delete") {

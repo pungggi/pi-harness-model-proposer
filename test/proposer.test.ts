@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import type { CompleteResult, HarnessItem, HarnessState, ProposeInput } from "pi-continual-harness";
 import type { ModelProposerConfig } from "../src/config.js";
 import {
+  buildPrompt,
   createModelProposer,
   extractJsonArray,
   parseDeltas,
@@ -18,7 +19,7 @@ import {
 
 function item(over: Partial<HarnessItem> & Pick<HarnessItem, "id" | "kind" | "content">): HarnessItem {
   const now = 10_000;
-  return { evidence: "e", importance: 0.5, active: true, createdAt: now, updatedAt: now, ...over };
+  return { evidence: "e", importance: 0.5, active: true, ownerModel: "", createdAt: now, updatedAt: now, ...over };
 }
 
 const state = (items: HarnessItem[]): HarnessState => ({ items });
@@ -241,5 +242,62 @@ describe("pure helpers", () => {
     expect(sanitizeDelta(null, ids)).toBeNull();
     expect(sanitizeDelta("string", ids)).toBeNull();
     expect(sanitizeDelta({ op: "weird" }, ids)).toBeNull();
+  });
+});
+
+describe("durable-layer scope (harness 0.9+)", () => {
+  it("passes a whitelisted scope through on create", async () => {
+    const r = await proposeWith(
+      JSON.stringify([
+        { op: "create", kind: "memory", content: "relay deploy uses piper", evidence: "e", scope: "project" },
+        { op: "create", kind: "prompt", content: "cite evidence", evidence: "e", scope: "global" },
+      ]),
+    );
+    expect(r.deltas).toHaveLength(2);
+    expect(r.deltas![0]!.delta).toMatchObject({ scope: "project" });
+    expect(r.deltas![1]!.delta).toMatchObject({ scope: "global" });
+    // the slug itself is never taken from the model (stamped server-side)
+    expect((r.deltas![0]!.delta as { project?: string }).project).toBeUndefined();
+  });
+
+  it("omits a garbage scope on create (defaults to global), doesn't drop the delta", async () => {
+    const r = await proposeWith(
+      JSON.stringify([{ op: "create", kind: "memory", content: "x", evidence: "e", scope: "everywhere" }]),
+    );
+    expect(r.deltas).toHaveLength(1);
+    expect((r.deltas![0]!.delta as { scope?: string }).scope).toBeUndefined();
+  });
+
+  it("a scope-only update (id + scope) is a legitimate layer move", async () => {
+    const items = [item({ id: "h_x", kind: "memory", content: "relay deploy" })];
+    const r = await proposeWith(JSON.stringify([{ op: "update", id: "h_x", scope: "project" }]), items);
+    expect(r.deltas).toHaveLength(1);
+    expect(r.deltas![0]!.delta).toMatchObject({ op: "update", id: "h_x", scope: "project" });
+    expect(r.deltas![0]!.rationale).toContain("scope → project");
+  });
+
+  it("an update with a garbage scope and nothing else settable is dropped", async () => {
+    const items = [item({ id: "h_x", kind: "memory", content: "c" })];
+    const r = await proposeWith(JSON.stringify([{ op: "update", id: "h_x", scope: "elsewhere" }]), items);
+    expect(r.deltas ?? []).toHaveLength(0);
+  });
+
+  it("buildPrompt tags project-scoped items in the digest and documents the scope field", () => {
+    const input = {
+      evidence: "[user] do the thing",
+      lookback: 10,
+      state: state([
+        item({ id: "h_g", kind: "memory", content: "global fact" }),
+        item({ id: "h_p", kind: "memory", content: "project fact", scope: "project", project: "my-proj" }),
+      ]),
+    } as ProposeInput;
+    const prompt = buildPrompt(input);
+    expect(prompt).toContain("scope=project(my-proj)");
+    expect(prompt).toContain("project fact");
+    // globals stay untagged (scope=global would be noise on every line)
+    expect(prompt).not.toContain("scope=global");
+    // the schema + rules mention scope
+    expect(prompt).toContain('"scope":"global|project"');
+    expect(prompt).toMatch(/stamped server-side/);
   });
 });

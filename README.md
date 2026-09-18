@@ -24,8 +24,9 @@ than shipping it invisible.
 pi install npm:pi-harness-model-proposer
 ```
 
-Requires `pi-continual-harness >= 0.6.2` (which injects the `complete` closure
-and records `modelCall` telemetry). Both install together.
+Requires `pi-continual-harness >= 0.9.0` (which injects the `complete`
+closure, records `modelCall` telemetry, and accepts `scope` on deltas). Both
+install together.
 
 ## Usage
 
@@ -68,6 +69,16 @@ It then also drives opt-in auto-refine (`autoRefine`) when that is enabled.
 So the model call never appears in the agent transcript, but **what it cost and
 what it proposed** are visible and reviewable, and every mutation still flows
 through the same audited `applyDeltas` with `/tree` rollback.
+
+### Scope awareness (harness 0.9+)
+
+The proposer is durable-layer aware: the state digest tags project-scoped items
+with `scope=project(<slug>)`, and the schema offers an optional
+`"scope":"global|project"` on `create`/`update` deltas. A **scope-only update**
+(id + scope) is a legitimate layer move, so the proposer can re-scope misplaced
+items during a `/refine`. The project slug itself is **never taken from the
+model** — the harness stamps it server-side from the session cwd; a garbage
+scope value is simply omitted (the item defaults to global).
 
 ## Configuration
 
