@@ -129,6 +129,36 @@ describe("robustness / fallback", () => {
     expect(r.modelCall?.error).toMatch(/not valid JSON/);
   });
 
+  it("is transparent to the harness 0.12/0.13 audit-entry shapes in the evidence (modelCall.usage, boundary auto-refine drafts)", async () => {
+    // Regression fixture (TODO §3): /refine evidence can now contain rendered
+    // entries carrying modelCall telemetry (with nested usage) and
+    // boundary-delivered auto-refine drafts (harness.auto-refine-request).
+    // Neither must affect the prompt build or the parse path.
+    const evidence = [
+      "[user] cut the release",
+      '[assistant] {"customType":"harness-refinement","proposer":"model","applied":1,"modelCall":{"model":"typesafe/jev-latest","usage":{"input":210,"output":18},"ok":true}}',
+      '[assistant] {"type":"custom_message","customType":"harness.auto-refine-request","content":"/refine (online self-improvement, last 25 turns as evidence)…"}',
+      "[assistant] release cut, tag pushed",
+    ].join("\n");
+    const input = { evidence, state: state([]), lookback: 25 } as ProposeInput;
+    // the prompt carries the entries verbatim without any preprocessing blowups
+    const prompt = buildPrompt(input);
+    expect(prompt).toContain('"customType":"harness.auto-refine-request"');
+    expect(prompt).toContain('"usage":{"input":210,"output":18}');
+    // and the propose path over such evidence behaves exactly as before
+    const proposer = createModelProposer({ getConfig: async () => cfg() });
+    const r = await proposer.propose({
+      ...input,
+      complete: fakeComplete(
+        JSON.stringify([{ op: "create", kind: "memory", content: "release tags drive CI", evidence: "tag v0.3.0 fired release.yml" }]),
+        { input: 42, output: 7 },
+      ),
+    });
+    expect(r.deltas).toHaveLength(1);
+    expect((r.deltas![0]!.delta as { content: string }).content).toBe("release tags drive CI");
+    expect(r.modelCall?.ok).toBe(true);
+  });
+
   it("returns ok:false when the model output is valid JSON but not an array", async () => {
     const r = await proposeWith(JSON.stringify({ op: "create", kind: "memory", content: "x", evidence: "e" }));
     expect(r.modelCall?.ok).toBe(false);

@@ -29,14 +29,26 @@ describe("loadConfig", () => {
 
   it("parses valid knobs", async () => {
     const file = join(dir, "harness-model.json");
-    writeFileSync(file, JSON.stringify({ model: "anthropic/claude-haiku", maxOutputTokens: 2048, maxDeltas: 5 }));
-    expect(await loadConfig(file)).toEqual({ model: "anthropic/claude-haiku", maxOutputTokens: 2048, maxDeltas: 5 });
+    writeFileSync(file, JSON.stringify({ model: "anthropic/claude-haiku", maxOutputTokens: 2048, maxDeltas: 5, gate: true, validate: true }));
+    expect(await loadConfig(file)).toEqual({ model: "anthropic/claude-haiku", maxOutputTokens: 2048, maxDeltas: 5, gate: true, validate: true });
   });
 
   it("drops invalid value types (non-string model, non-positive numbers)", async () => {
     const file = join(dir, "harness-model.json");
     writeFileSync(file, JSON.stringify({ model: 123, maxOutputTokens: -5, maxDeltas: 0 }));
     expect(await loadConfig(file)).toEqual({});
+  });
+
+  it("drops non-boolean gate/validate (strict opt-in booleans)", async () => {
+    const file = join(dir, "harness-model.json");
+    writeFileSync(file, JSON.stringify({ gate: "yes", validate: 1 }));
+    expect(await loadConfig(file)).toEqual({});
+  });
+
+  it("gate/validate default to off when absent", async () => {
+    const file = join(dir, "harness-model.json");
+    writeFileSync(file, JSON.stringify({ model: "x" }));
+    expect(await loadConfig(file)).toEqual({ model: "x" });
   });
 
   it("ignores unknown keys", async () => {

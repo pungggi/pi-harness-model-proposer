@@ -1,6 +1,6 @@
 {
   "name": "pi-harness-model-proposer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dedicated-model proposer for pi-continual-harness. Registers a /refine proposer ('model') that makes its own one-shot LLM call (via the harness's injected complete closure) to produce evidence-backed CRUD deltas directly — hidden from the transcript but audited (model/tokens/latency recorded in the refine entry). Validates/sanitizes model output against current state so the harness's all-or-nothing applyDeltas never aborts on a hallucinated id.",
   "keywords": [
     "pi-package",
@@ -35,13 +35,13 @@
     "node": ">=20.0.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0",
-    "pi-continual-harness": ">=0.9.0"
+    "@earendil-works/pi-coding-agent": ">=0.99.0",
+    "pi-continual-harness": ">=0.12.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@earendil-works/pi-coding-agent": ">=0.99.0",
     "@types/node": "^22.0.0",
-    "pi-continual-harness": ">=0.9.0",
+    "pi-continual-harness": ">=0.12.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   },

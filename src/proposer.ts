@@ -17,8 +17,16 @@
 //     call is hidden from the transcript but its spend (model/tokens/latency) and
 //     its proposals are audited.
 //
+// Two optional classifier hooks (harness 0.12+ `classify` seam, both opt-in via
+// ~/.pi/agent/harness-model.json, both fail-open, both audited — see
+// classify.ts):
+//   - "gate": ONE cheap yes/no before the completion; "no durable correction"
+//     skips the model call entirely (saves hidden spend on routine windows);
+//   - "validate": the classifier confirms each proposed delta is grounded;
+//     rejected ones are dropped before they can reach applyDeltas.
+//
 // Select with `/refine --proposer model` or `"proposer": "model"` in the harness
-// config. Pure given an injected `complete`, so it is fully unit-testable.
+// config. Pure given injected `complete`/`classify`, so it is fully unit-testable.
 
 import type {
   ComponentKind,
@@ -35,6 +43,7 @@ import {
   loadConfig,
   type ModelProposerConfig,
 } from "./config.js";
+import { buildGateRequest, buildValidateQuestions, gateDecision, mergeUsage, validateDecision, VALIDATE_MAX_QUESTIONS } from "./classify.js";
 
 const PROPOSER_NAME = "model";
 
@@ -265,6 +274,31 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
       } catch {
         config = {};
       }
+
+      // Opt-in classifier gate: ONE cheap yes/no before spending the completion.
+      // Uses the harness's own gate question + fail-open decision, so a flaky or
+      // unconfigured classifier never blocks the refine — it can only skip it.
+      // `classify` is undefined when no classifier is configured: degrade.
+      let classifierUsage: { input: number; output: number } | undefined;
+      if (config.gate && input.classify) {
+        const res = await input.classify(buildGateRequest(input.evidence));
+        const decision = gateDecision(res);
+        if (!decision.proceed) {
+          // The classifier call is the ONLY hidden spend — report it as the
+          // modelCall so the skip stays audited (model, tokens, latency).
+          return {
+            deltas: [],
+            modelCall: {
+              ...(res.model ? { model: res.model } : {}),
+              ok: true,
+              latencyMs: elapsed(),
+              ...(res.usage ? { inputTokens: res.usage.input, outputTokens: res.usage.output } : {}),
+            },
+          };
+        }
+        classifierUsage = res.usage;
+      }
+
       const prompt = buildPrompt(input);
 
       let result: CompleteResult;
@@ -275,6 +309,9 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
           ...(config.model ? { modelId: config.model } : {}),
         });
       } catch (err) {
+        // The completion threw, but a passed gate already spent classifier
+        // tokens — keep the accounting contract: report what was spent (there
+        // is no completion usage to merge; classifierUsage is the only spend).
         return {
           deltas: [],
           modelCall: {
@@ -282,12 +319,14 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
             ok: false,
             error: `model call failed: ${(err as Error).message}`,
             latencyMs: elapsed(),
+            ...(classifierUsage ? { inputTokens: classifierUsage.input, outputTokens: classifierUsage.output } : {}),
           },
         };
       }
 
       const outcome = parseDeltas(result.text, config.maxDeltas ?? DEFAULT_MAX_DELTAS, input);
       if (!outcome.ok) {
+        const usage = mergeUsage(result.usage, classifierUsage);
         return {
           deltas: [],
           modelCall: {
@@ -295,18 +334,32 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
             ok: false,
             error: outcome.error,
             latencyMs: elapsed(),
-            ...(result.usage ? { inputTokens: result.usage.input, outputTokens: result.usage.output } : {}),
+            ...(usage ? { inputTokens: usage.input, outputTokens: usage.output } : {}),
           },
         };
       }
 
+      // Opt-in classifier validation: a precision filter on the model's output.
+      // Fail-open — an error or a missing answer keeps the delta; only an
+      // explicit "not grounded" drops it. Deltas beyond the question cap are
+      // kept unvalidated (never dropped by the cap).
+      let deltas = outcome.deltas;
+      if (config.validate && input.classify && deltas.length > 0) {
+        const capped = deltas.slice(0, VALIDATE_MAX_QUESTIONS);
+        const res = await input.classify(buildValidateQuestions(capped, input.evidence));
+        const decision = validateDecision(capped, res);
+        deltas = [...decision.kept, ...deltas.slice(VALIDATE_MAX_QUESTIONS)];
+        classifierUsage = mergeUsage(classifierUsage, res.usage);
+      }
+
+      const usage = mergeUsage(result.usage, classifierUsage);
       const telemetry: ModelCallTelemetry = {
         model: result.model ?? config.model ?? "active",
         ok: true,
         latencyMs: elapsed(),
-        ...(result.usage ? { inputTokens: result.usage.input, outputTokens: result.usage.output } : {}),
+        ...(usage ? { inputTokens: usage.input, outputTokens: usage.output } : {}),
       };
-      return { deltas: outcome.deltas, modelCall: telemetry };
+      return { deltas, modelCall: telemetry };
     },
   };
 }
