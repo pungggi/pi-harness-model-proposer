@@ -24,9 +24,7 @@ than shipping it invisible.
 pi install npm:pi-harness-model-proposer
 ```
 
-Requires `pi-continual-harness >= 0.9.0` (which injects the `complete`
-closure, records `modelCall` telemetry, and accepts `scope` on deltas). Both
-install together.
+Requires `pi-continual-harness >= 0.12.0` (and therefore `@earendil-works/pi-coding-agent >= 0.99.0`, which the harness itself peers on — installed together, the ranges stay compatible). Harness 0.12+ injects the `complete` closure, the optional `classify` closure, records `modelCall` telemetry, and accepts `scope` on deltas.
 
 ## Usage
 
@@ -55,6 +53,7 @@ It then also drives opt-in auto-refine (`autoRefine`) when that is enabled.
    and the trajectory evidence. It asks for a **JSON array** of deltas only.
 3. It calls `complete` (a hidden completion built by the harness from
    `ctx.modelRegistry`), honoring the agent abort signal and a token budget.
+   Optionally gated/validated by the cheap classifier seam — see below.
 4. It **parses, then validates + sanitizes** each delta against the current state
    before returning it. This is the safety-critical step: the harness's
    `applyDeltas` is all-or-nothing and re-throws on an unknown id, so a single
@@ -69,6 +68,30 @@ It then also drives opt-in auto-refine (`autoRefine`) when that is enabled.
 So the model call never appears in the agent transcript, but **what it cost and
 what it proposed** are visible and reviewable, and every mutation still flows
 through the same audited `applyDeltas` with `/tree` rollback.
+
+### Classifier gate + validation (harness 0.12+)
+
+When the harness has a **classifier** configured
+(`"classifier": { "model": "typesafe/jev-latest" }` or a local llama.cpp
+classifier in `harness.json`), it injects a cheap `classify` closure into the
+propose input. This proposer can use it in two **opt-in** ways
+(`~/.pi/agent/harness-model.json`):
+
+| Knob | What it does |
+|---|---|
+| `"gate": true` | Asks **one** cheap yes/no before the completion — "does this trajectory contain a durable correction worth deltas?" — and **skips the model call entirely** when the answer is no. Saves hidden model spend on routine windows. |
+| `"validate": true` | After the completion, asks the classifier to confirm each proposed delta is grounded in the evidence; rejected deltas are **dropped before** they can reach the all-or-nothing `applyDeltas`. |
+
+Both are **fail-open**: `classify` is simply `undefined` when no classifier is
+configured (degrade to the plain behavior above), and a classifier error or a
+missing answer never blocks a refine — the classifier can only skip/narrow
+work, never disable it. This is the same question and semantics the harness's
+own `"autoRefine": { "gate": true }` uses, so with both enabled an auto-refine
+run gates twice at the same cheap layer (once before spending the refine, once
+before spending the completion) — the second gate only fires for runs that
+passed the first. Classifier spend stays audited: a gate skip reports the
+classifier call itself as the `modelCall` entry; otherwise the classifier's
+token usage is folded into the completion's `modelCall` totals.
 
 ### Scope awareness (harness 0.9+)
 
@@ -88,7 +111,9 @@ Optional config at `~/.pi/agent/harness-model.json` (missing/malformed → defau
 {
   "model": "anthropic/claude-3-5-haiku",
   "maxOutputTokens": 4096,
-  "maxDeltas": 20
+  "maxDeltas": 20,
+  "gate": false,
+  "validate": false
 }
 ```
 
@@ -97,6 +122,10 @@ Optional config at `~/.pi/agent/harness-model.json` (missing/malformed → defau
 - **`maxOutputTokens`** — token budget for the completion (default `4096`).
 - **`maxDeltas`** — cap on deltas applied per run; excess is dropped to bound
   spend (default `20`).
+- **`gate`** / **`validate`** — opt-in classifier hooks; see
+  [Classifier gate + validation](#classifier-gate--validation-harness-012).
+  Both require `classifier.model` in the **harness** config
+  (`~/.pi/agent/harness.json`); without one they are no-ops.
 
 ## Behavior on failure
 
@@ -104,7 +133,8 @@ This proposer has no access to `ctx`, so it cannot fall back to the `steering`
 proposer. Instead it degrades to an **audited no-op**: when there is no model,
 the call fails, or the output is unparseable, it returns no deltas and records a
 `modelCall` with `ok: false` + an error in the audit entry. Nothing throws; the
-harness shows "applied 0".
+harness shows "applied 0". The classifier hooks fail **open** instead: a
+missing or erroring classifier never changes the outcome (see above).
 
 ## Scope and non-goals
 

@@ -21,3 +21,15 @@ export default function modelProposerExtension(_pi: ExtensionAPI): void {
 
 export { createModelProposer, type CreateModelProposerOptions } from "./proposer.js";
 export { loadConfig, type ModelProposerConfig, CONFIG_PATH, DEFAULT_MAX_DELTAS, DEFAULT_MAX_OUTPUT_TOKENS } from "./config.js";
+// Classifier seam (harness 0.12+): the gate/validate builders re-exported so
+// hosts and tests can reuse them without reaching into internal paths.
+export {
+  buildGateRequest,
+  buildValidateQuestions,
+  filterValidated,
+  gateDecision,
+  mergeUsage,
+  renderProposal,
+  validateDecision,
+  VALIDATE_MAX_QUESTIONS,
+} from "./classify.js";
