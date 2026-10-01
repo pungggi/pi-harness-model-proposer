@@ -309,6 +309,9 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
           ...(config.model ? { modelId: config.model } : {}),
         });
       } catch (err) {
+        // The completion threw, but a passed gate already spent classifier
+        // tokens — keep the accounting contract: report what was spent (there
+        // is no completion usage to merge; classifierUsage is the only spend).
         return {
           deltas: [],
           modelCall: {
@@ -316,6 +319,7 @@ export function createModelProposer(options: CreateModelProposerOptions = {}): D
             ok: false,
             error: `model call failed: ${(err as Error).message}`,
             latencyMs: elapsed(),
+            ...(classifierUsage ? { inputTokens: classifierUsage.input, outputTokens: classifierUsage.output } : {}),
           },
         };
       }

@@ -130,6 +130,24 @@ describe("gate (pre-filter, opt-in)", () => {
     expect(r.modelCall?.inputTokens).toBe(5);
   });
 
+  it("reports already-spent classifier tokens when the gate passes but the completion throws (PR #4 review)", async () => {
+    // Accounting contract: the gate call is hidden spend — even when the
+    // completion fails, its tokens must land in the audited modelCall.
+    const { classify } = fakeClassify({ gate: { value: true } }, { input: 11, output: 1 });
+    const r = await propose({
+      config: { gate: true },
+      classify,
+      complete: async () => {
+        throw new Error("503 upstream");
+      },
+    });
+    expect(r.deltas ?? []).toHaveLength(0);
+    expect(r.modelCall?.ok).toBe(false);
+    expect(r.modelCall?.error).toContain("503 upstream");
+    expect(r.modelCall?.inputTokens).toBe(11);
+    expect(r.modelCall?.outputTokens).toBe(1);
+  });
+
   it("fails OPEN on a missing gate answer (only ask/yes/no keys answered)", async () => {
     const { classify } = fakeClassify({});
     const r = await propose({ config: { gate: true }, classify });
