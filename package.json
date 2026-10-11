@@ -1,6 +1,6 @@
 {
   "name": "pi-harness-model-proposer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Dedicated-model proposer for pi-continual-harness. Registers a /refine proposer ('model') that makes its own one-shot LLM call (via the harness's injected complete closure) to produce evidence-backed CRUD deltas directly — hidden from the transcript but audited (model/tokens/latency recorded in the refine entry). Validates/sanitizes model output against current state so the harness's all-or-nothing applyDeltas never aborts on a hallucinated id.",
   "keywords": [
     "pi-package",
@@ -17,9 +17,10 @@
   "license": "MIT",
   "author": "alessandro@pungitore.ch",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/api.js",
+  "types": "dist/api.d.ts",
   "files": [
-    "src",
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -36,12 +37,12 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.99.0",
-    "pi-continual-harness": ">=0.12.0"
+    "pi-continual-harness": ">=0.17.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.99.0",
     "@types/node": "^22.0.0",
-    "pi-continual-harness": ">=0.12.0",
+    "pi-continual-harness": ">=0.17.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   },
@@ -51,13 +52,15 @@
   },
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./dist/index.js"
     ]
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run test",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepack": "npm run build",
     "prepublishOnly": "node -e \"if(!process.env.CI)throw new Error('publish via release.yml CI: push a v* tag. Manual npm publish is blocked to guarantee provenance + version sync.')\""
   }
 }
