@@ -24,7 +24,7 @@ than shipping it invisible.
 pi install npm:pi-harness-model-proposer
 ```
 
-Requires `pi-continual-harness >= 0.12.0` (and therefore `@earendil-works/pi-coding-agent >= 0.99.0`, which the harness itself peers on — installed together, the ranges stay compatible). Harness 0.12+ injects the `complete` closure, the optional `classify` closure, records `modelCall` telemetry, and accepts `scope` on deltas.
+Requires `pi-continual-harness >= 0.17.0` (and therefore `@earendil-works/pi-coding-agent >= 0.99.0`, which the harness itself peers on — installed together, the ranges stay compatible). Harness 0.17+ injects the `complete` closure, the optional `classify` closure, records `modelCall` telemetry, accepts `scope` on deltas, and reads its proposer registry from the process-wide global this package registers into.
 
 ## Usage
 
@@ -42,6 +42,28 @@ Or set it as the default in the harness config (`~/.pi/agent/harness.json`):
 ```
 
 It then also drives opt-in auto-refine (`autoRefine`) when that is enabled.
+
+## Startup cost (why the entry is thin)
+
+pi awaits every extension factory during startup, and isolates each
+extension's module tree — so a static `import { registerProposer } from
+"pi-continual-harness"` in the entry would cost every pi launch ~0.9s of
+module-graph loading (measured on Windows via the bogus-provider fast-fail)
+and, worse, would write to a private registry copy `/refine` never read.
+
+- **Thin entry**: the factory makes one synchronous `Map.set` into the
+  process-wide registry `Symbol.for("pi-continual-harness.proposers")`
+  (harness ≥ 0.17.0). Zero runtime imports; registration is immediate — no
+  load-order window.
+- **Lazy implementation**: `proposer.ts`/`classify.ts`/`config.ts` are
+  dynamic-imported on the first actual `propose()` call, off the startup
+  critical path.
+- **Precompiled `dist/`**: the pi entry is plain JS (`./dist/index.js`), so no
+  per-startup TS transpile. The public API re-export surface lives in
+  `dist/api.js` (`main`).
+
+Measured marginal startup cost: **~970ms → ~5ms** (bogus-provider fast-fail,
+Windows, warm cache).
 
 ## How it works
 
