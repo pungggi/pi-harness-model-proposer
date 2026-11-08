@@ -20,6 +20,7 @@
   "main": "dist/api.js",
   "types": "dist/api.d.ts",
   "files": [
+    "CHANGELOG.md",
     "dist",
     "README.md",
     "LICENSE"
